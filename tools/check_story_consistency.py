@@ -29,6 +29,7 @@ CHINESE_DIGITS = {
     "九": 9,
 }
 CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000}
+MIN_BODY_CHARS = 1000
 
 
 def load_ledger() -> dict:
@@ -65,6 +66,14 @@ def chinese_number(value: str) -> int | None:
 def scan_file(path: Path, forbidden: list[str]) -> list[str]:
     text = path.read_text(encoding="utf-8-sig")
     issues: list[str] = []
+
+    lines = text.splitlines()
+    body = "".join(lines[1:]) if len(lines) > 1 else ""
+    body_chars = len(re.sub(r"\s", "", body))
+    if body_chars < MIN_BODY_CHARS:
+        issues.append(
+            f"{path.relative_to(ROOT)}:1: 正文仅{body_chars}字，少于最低要求{MIN_BODY_CHARS}字"
+        )
 
     for term in forbidden:
         for match in re.finditer(re.escape(term), text, flags=re.IGNORECASE):
