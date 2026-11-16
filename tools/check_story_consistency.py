@@ -16,6 +16,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANUSCRIPT_DIR = ROOT / "manuscript" / "正文"
 LEDGER_PATH = ROOT / "docs" / "历史事实台账.json"
+CHINESE_DIGITS = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000}
 
 
 def load_ledger() -> dict:
@@ -31,6 +44,24 @@ def find_line(text: str, position: int) -> int:
     return text.count("\n", 0, position) + 1
 
 
+def chinese_number(value: str) -> int | None:
+    """把章节标题中的中文数字转换成整数，例如“十”“二十三”。"""
+    if not value or any(char not in CHINESE_DIGITS and char not in CHINESE_UNITS for char in value):
+        return None
+    total = 0
+    current = 0
+    for char in value:
+        if char in CHINESE_DIGITS:
+            current = CHINESE_DIGITS[char]
+            continue
+        unit = CHINESE_UNITS[char]
+        if current == 0:
+            current = 1
+        total += current * unit
+        current = 0
+    return total + current
+
+
 def scan_file(path: Path, forbidden: list[str]) -> list[str]:
     text = path.read_text(encoding="utf-8-sig")
     issues: list[str] = []
@@ -43,8 +74,18 @@ def scan_file(path: Path, forbidden: list[str]) -> list[str]:
         for match in re.finditer(re.escape(marker), text, flags=re.IGNORECASE):
             issues.append(f"{path.relative_to(ROOT)}:{find_line(text, match.start())}: 未完成标记“{marker}”")
 
-    if not re.search(r"^# 第.+章", text, flags=re.MULTILINE):
+    heading = re.search(r"^# 第(.+?)章", text, flags=re.MULTILINE)
+    if not heading:
         issues.append(f"{path.relative_to(ROOT)}:1: 缺少“# 第X章”章节标题")
+    else:
+        filename_number = re.match(r"(\d+)-", path.name)
+        heading_number = chinese_number(heading.group(1))
+        if filename_number and heading_number is not None:
+            expected = int(filename_number.group(1))
+            if expected != heading_number:
+                issues.append(
+                    f"{path.relative_to(ROOT)}:1: 文件编号为第{expected}章，标题却写成第{heading_number}章"
+                )
 
     return issues
 
@@ -59,6 +100,20 @@ def main() -> int:
     issues: list[str] = []
     for path in files:
         issues.extend(scan_file(path, ledger.get("forbidden_in_manuscript", [])))
+
+    numbered_files = []
+    for path in files:
+        match = re.match(r"(\d+)-", path.name)
+        if match:
+            numbered_files.append((int(match.group(1)), path))
+    numbers = [number for number, _ in numbered_files]
+    if len(numbers) != len(set(numbers)):
+        issues.append("正文文件编号重复")
+    if numbers:
+        expected_numbers = set(range(1, max(numbers) + 1))
+        missing = sorted(expected_numbers - set(numbers))
+        if missing:
+            issues.append("正文文件编号缺失：" + ", ".join(str(number) for number in missing))
 
     report = {
         "manuscript_files": len(files),
